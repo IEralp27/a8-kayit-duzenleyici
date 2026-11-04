@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Asphalt 8 kayit dosyalari ve yedekleri (kisisel veri, depoya eklemeyin)
+profile
+profile.yedek_*
+localprofile
+settings
+*.Appx
