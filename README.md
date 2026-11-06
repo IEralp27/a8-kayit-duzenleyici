@@ -19,6 +19,8 @@ Başka sürümlerde kayıt dosyası tanınmazsa program **hiçbir şeyi değişt
 ## Özellikler
 
 - Pencereli arayüz: istediğiniz miktarı yazın ya da **− 1M / + 1M / Max** butonlarını kullanın
+- **Tüm araçları aç + full**: oyundaki 231 aracın tamamını (gizli araçlar ve motosikletler dahil) garaja ekler, her birini kendi en üst yükseltme seviyesine çıkarır
+- **Garajı full yükselt**: sadece sahip olunan araçların hızlanma, hız, yol tutuş ve nitro seviyelerini en üste çeker
 - Kayıt dosyasını otomatik bulur
 - Her değişiklikten önce **zaman damgalı yedek** alır, tek tuşla geri yüklenir
 - Oyun açıksa değişiklik yapmayı reddeder
@@ -46,6 +48,10 @@ Bir sorun olursa **Yedeği geri yükle** butonu önceki hâli geri getirir. Yede
 python a8_kayit_duzenleyici.py --goster                     # mevcut değerleri göster
 python a8_kayit_duzenleyici.py --kredi 1000000 --token 5000  # değerleri değiştir
 python a8_kayit_duzenleyici.py --geri-yukle                 # en son yedeği geri yükle
+python a8_kayit_duzenleyici.py --tum-araclar                # tüm araçları aç + full yükselt
+python a8_kayit_duzenleyici.py --tum-araclar --sadece-aktif # sadece mağazada görünen 149 araç
+python a8_kayit_duzenleyici.py --full-yukselt               # garajdaki araçları full yükselt
+python a8_dokum.py                                          # kayıttaki tüm alanları listele (salt okunur)
 python a8_kayit_duzenleyici.py --dosya "C:\yol\profile" --kredi 500000
 ```
 
@@ -62,6 +68,9 @@ Oyun bu değerleri 32 bitlik tam sayı olarak saklıyor (en fazla 2.147.483.647)
 
 **Token görünmüyor/harcanmıyor?**
 Kayıttaki token alanı yerel bir *önbellek*. Asıl bakiye sunucuda tutuluyor olabilir, bu yüzden token her zaman çalışmayabilir.
+
+**Token ile alınan araçlar neden gri?**
+Bu sürümde token harcamak sunucu onayı istiyor. Bunun yerine **Tüm araçları aç** seçeneği araçları doğrudan garaja ekler.
 
 **Neden internete bağlanmamalıyım?**
 Sunucu bakiyeyi düzeltebilir veya hesabı işaretleyip yasaklayabilir.

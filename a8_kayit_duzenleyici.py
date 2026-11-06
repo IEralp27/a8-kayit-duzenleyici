@@ -342,6 +342,117 @@ def duzenle(yol, kredi=None, token=None):
     return onceki, sonraki, yedek, uyarilar
 
 
+ARAC_KAYIT = 55      # ownedCars içindeki her aracın kayıt boyutu (bayt)
+YUKSELTME_MAX = 5    # bu sürümde çoğu araç için en yüksek seviye
+
+# 3.7.0m mağaza tanımında aktif (oyunda görünen) araç numaraları
+AKTIF_ARACLAR = (
+    list(range(1, 40)) + [41, 42] + list(range(44, 82)) + list(range(83, 115))
+    + [117, 118, 119, 120, 121, 122, 123, 124, 127, 128, 130, 131, 134, 136, 137, 138,
+       139, 140, 143, 145, 146, 147, 148, 149, 151, 153, 154, 155, 157, 159, 160, 162,
+       165, 169, 170, 176, 177, 196]
+)
+# Mağaza tanımındaki tüm araç numaraları (gizli araçlar ve motosikletler dahil; 208 yok)
+TUM_ARACLAR = [i for i in range(1, 233) if i != 208]
+# En üst yükseltmesi 5 olmayan araçlar
+OZEL_MAX = {i: 10 for i in (195, 196, 198, 199, 200, 202, 203, 209, 215, 217, 226)}
+
+
+def arac_max(cid):
+    return OZEL_MAX.get(cid, YUKSELTME_MAX)
+
+
+def kaydi_yeniden_paketle(ham, bilgi, yeni_duz):
+    """Boyutu değişmiş düz kaydı şifreleyip tüm kopyaların yerine koyar."""
+    duz = bytearray(yeni_duz)
+    duz[0:4] = struct.pack("<I", zlib.crc32(bytes(duz[4:])))
+    duz_boyut = len(duz)
+    duz += b"\0" * ((-duz_boyut) % 8)
+    govde = sifrele(bytes(duz), bilgi["anahtar"])
+    eski = bilgi["kayit"]
+    bayrak = struct.unpack("<I", eski[1:5])[0]
+    kayit = eski[:1] + struct.pack("<3I", bayrak, len(govde) + 4, duz_boyut) + govde
+    eski_etiket = struct.pack("<2I", zlib.crc32(eski), len(eski))
+    yeni_etiket = struct.pack("<2I", zlib.crc32(kayit), len(kayit))
+    out, onceki = bytearray(), 0
+    for q in bilgi["kopyalar"]:
+        out += ham[onceki:q].replace(eski_etiket, yeni_etiket)
+        out += kayit
+        onceki = q + len(eski)
+    out += ham[onceki:].replace(eski_etiket, yeni_etiket)
+    return bytes(out)
+
+
+def tum_araclari_ac(yol, full=True, gizli=True):
+    """Tüm araçları (gizli=True ise gizli araçlar ve motosikletler dahil) garaja ekler; full=True ise hepsini en üst seviyeye yükseltir.
+    (önceki_adet, yeni_adet, yedek_yolu) döndürür."""
+    with open(yol, "rb") as f:
+        ham = f.read()
+    bilgi = kaydi_ac(ham)
+    duz = bytearray(bilgi["duz"][:bilgi["duz_boyut"]])
+    og = ogeler(duz, bilgi["duz_boyut"])
+    if "ownedCars" not in og:
+        raise ValueError("'ownedCars' alanı kayıtta bulunamadı.")
+    _t, boyut, o = og["ownedCars"]
+    adet = struct.unpack("<I", duz[o:o + 4])[0]
+    if 4 + adet * ARAC_KAYIT != boyut:
+        raise ValueError("Araç listesi beklenen biçimde değil; değişiklik yapılmadı.")
+    kayitlar = [bytearray(duz[o + 4 + i * ARAC_KAYIT:o + 4 + (i + 1) * ARAC_KAYIT]) for i in range(adet)]
+    var_olan = {struct.unpack("<I", r[:4])[0] for r in kayitlar}
+    for cid in (TUM_ARACLAR if gizli else AKTIF_ARACLAR):
+        if cid not in var_olan:
+            kayitlar.append(bytearray(struct.pack("<I", cid) + b"\0" * (ARAC_KAYIT - 4)))
+    if full:
+        for r in kayitlar:
+            m = arac_max(struct.unpack("<I", r[:4])[0])
+            eski = struct.unpack("<4i", r[4:20])
+            r[4:20] = struct.pack("<4i", *(max(x, m) for x in eski))
+    blob = struct.pack("<I", len(kayitlar)) + b"".join(kayitlar)
+    yeni_duz = duz[:o - 4] + struct.pack("<I", len(blob)) + blob + duz[o + boyut:]
+    yeni = kaydi_yeniden_paketle(ham, bilgi, bytes(yeni_duz))
+    kontrol = kaydi_ac(yeni)
+    og2 = ogeler(kontrol["duz"], kontrol["duz_boyut"])
+    _t2, _b2, o2 = og2["ownedCars"]
+    if struct.unpack("<I", kontrol["duz"][o2:o2 + 4])[0] != len(kayitlar):
+        raise ValueError("Doğrulama başarısız; değişiklik yapılmadı.")
+    yedek = yedekle(yol)
+    with open(yol, "wb") as f:
+        f.write(yeni)
+    return adet, len(kayitlar), yedek
+
+
+def full_yukselt(yol, seviye=YUKSELTME_MAX):
+    """Sahip olunan tüm araçların 4 yükseltmesini (hızlanma, hız, yol tutuş, nitro) en üste çeker.
+    (araç_sayısı, değişen_sayısı, yedek_yolu) döndürür."""
+    with open(yol, "rb") as f:
+        ham = f.read()
+    bilgi = kaydi_ac(ham)
+    duz = bytearray(bilgi["duz"])
+    og = ogeler(duz, bilgi["duz_boyut"])
+    if "ownedCars" not in og:
+        raise ValueError("'ownedCars' alanı kayıtta bulunamadı.")
+    _t, boyut, o = og["ownedCars"]
+    adet = struct.unpack("<I", duz[o:o + 4])[0]
+    if 4 + adet * ARAC_KAYIT != boyut:
+        raise ValueError("Araç listesi beklenen biçimde değil; değişiklik yapılmadı.")
+    degisen = 0
+    for i in range(adet):
+        p = o + 4 + i * ARAC_KAYIT + 4
+        hedef = arac_max(struct.unpack("<I", duz[p - 4:p])[0]) if seviye == YUKSELTME_MAX else seviye
+        eski = struct.unpack("<4i", duz[p:p + 16])
+        if any(x < hedef for x in eski):
+            duz[p:p + 16] = struct.pack("<4i", *([hedef] * 4))
+            degisen += 1
+    if not degisen:
+        return adet, 0, None
+    yeni = kaydi_paketle(ham, bilgi, bytes(duz))
+    kaydi_ac(yeni)  # doğrulama
+    yedek = yedekle(yol)
+    with open(yol, "wb") as f:
+        f.write(yeni)
+    return adet, degisen, yedek
+
+
 def geri_yukle(yol):
     yedekler = sorted(glob.glob(yol + ".yedek_*"))
     if not yedekler:
@@ -448,6 +559,25 @@ def arayuz(baslangic_yolu=None):
             messagebox.showinfo("Yedek yok", "Bu dosya için yedek bulunamadı.")
         yenile()
 
+    def araclar(hepsi):
+        if oyun_acik_mi():
+            messagebox.showwarning("Oyun açık", "Önce oyunu kapatın.")
+            return
+        try:
+            if hepsi:
+                once, sonra, yedek = tum_araclari_ac(yol_var.get())
+                mesaj = f"Garaj: {once} → {sonra} araç, hepsi full yükseltildi."
+            else:
+                adet, degisen, yedek = full_yukselt(yol_var.get())
+                mesaj = f"{adet} araçtan {degisen} tanesi full yükseltildi."
+        except Exception as e:
+            messagebox.showerror("Hata", str(e))
+            return
+        if yedek:
+            mesaj += f"\n\nYedek alındı:\n{yedek}"
+        messagebox.showinfo("Tamam", mesaj)
+        yenile()
+
     cerceve = ttk.Frame(kok, padding=14)
     cerceve.grid()
 
@@ -483,6 +613,12 @@ def arayuz(baslangic_yolu=None):
     ttk.Button(butonlar, text="Yenile", command=yenile).grid(row=0, column=1, padx=(0, 6))
     kaydet_btn = ttk.Button(butonlar, text="Kaydet", command=kaydet)
     kaydet_btn.grid(row=0, column=2)
+    arac_kutu = ttk.Frame(cerceve)
+    arac_kutu.grid(row=9, column=0, columnspan=4, sticky="e", pady=(10, 0))
+    ttk.Button(arac_kutu, text="Garajı full yükselt",
+               command=lambda: araclar(False)).grid(row=0, column=0, padx=(0, 6))
+    ttk.Button(arac_kutu, text="Tüm araçları aç + full",
+               command=lambda: araclar(True)).grid(row=0, column=1)
 
     ttk.Label(cerceve, text="Oyun kapalıyken kullanın. Değiştirilmiş kayıtla internete bağlanmak ban riski taşır.",
               foreground="#a33", wraplength=470).grid(row=7, column=0, columnspan=4, sticky="w", pady=(12, 0))
@@ -503,10 +639,17 @@ def main():
     ap.add_argument("--token", type=int, help="yeni token (mavi coin) miktarı")
     ap.add_argument("--goster", action="store_true", help="sadece mevcut değerleri göster")
     ap.add_argument("--geri-yukle", action="store_true", help="en son yedeği geri yükle")
+    ap.add_argument("--full-yukselt", action="store_true",
+                    help="sahip olunan tüm araçların yükseltmelerini en üst seviyeye çek")
+    ap.add_argument("--tum-araclar", action="store_true",
+                    help="tüm araçları (gizliler ve motosikletler dahil) garaja ekle ve full yükselt")
+    ap.add_argument("--sadece-aktif", action="store_true",
+                    help="--tum-araclar ile: sadece mağazada aktif araçları ekle")
     a = ap.parse_args()
 
     yol = a.dosya or varsayilan_yol()
-    komut_satiri = a.goster or a.geri_yukle or a.kredi is not None or a.token is not None
+    komut_satiri = (a.goster or a.geri_yukle or a.full_yukselt or a.tum_araclar
+                    or a.kredi is not None or a.token is not None)
 
     if not komut_satiri:
         try:
@@ -533,6 +676,17 @@ def main():
             son = geri_yukle(yol)
             print(f"Geri yüklendi: {son}" if son else "Yedek bulunamadı.")
             return
+        if a.tum_araclar:
+            once, sonra, yedek = tum_araclari_ac(yol, gizli=not a.sadece_aktif)
+            print(f"Garaj: {once} → {sonra} araç (hepsi full). Yedek: {yedek}")
+            if a.kredi is None and a.token is None:
+                return
+        if a.full_yukselt:
+            adet, degisen, yedek = full_yukselt(yol)
+            print(f"{adet} araçtan {degisen} tanesi full yükseltildi."
+                  + (f"\nYedek: {yedek}" if yedek else " (Zaten hepsi full.)"))
+            if a.kredi is None and a.token is None:
+                return
         onceki, sonraki, yedek, uyarilar = duzenle(yol, a.kredi, a.token)
         print("Önceki değerler:")
         degerleri_yazdir(onceki)
